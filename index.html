@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ProperCare Field · PGP Preventivas v8.4.3</title>
+<title>ProperCare Field · PGP Preventivas v8.4.4</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -190,6 +190,15 @@
   .sessions-empty{font-size:13px;color:var(--text-light);text-align:center;padding:24px 0;font-style:italic;line-height:1.6}
   .btn-save-session{width:100%;padding:11px;border:none;border-radius:9px;font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:700;text-transform:uppercase;background:var(--blue);color:white;cursor:pointer;margin-top:4px}
   .sessions-save-bar{padding:10px 14px 2px;border-top:1px solid var(--gray-mid)}
+
+  /* ── Destaques campos variáveis / faltantes (v8.4.4) ── */
+  .pgp-field-needs-update{border-color:#E8A020 !important;background:#fffaf0 !important}
+  .pgp-field-needs-update::placeholder{color:#b87000 !important}
+  .pgp-field-confirmed-current{border-color:#1e8c4a !important;background:#f0fff5 !important}
+  .pgp-missing-field{border-color:#c0392b !important;background:#fff5f5 !important}
+  .pgp-dynamic-hint{font-size:10px;color:#b87000;font-style:italic;margin-top:1px;display:block}
+  .pgp-missing-alert{background:#fff5f5;border-left:3px solid #c0392b;border-radius:0 6px 6px 0;padding:6px 10px;font-size:11px;color:#c0392b;line-height:1.5;margin:4px 0 6px}
+  .pgp-missing-alert strong{display:block;margin-bottom:2px;font-size:10px;text-transform:uppercase;letter-spacing:.4px}
 
   /* Notifications */
   @keyframes slideIn{from{transform:translateX(400px);opacity:0}to{transform:translateX(0);opacity:1}}
@@ -1257,6 +1266,7 @@ function buildPanelHTML(idx) {
             <div class="sub-group"><label>Última visita</label><input type="date" data-key="${p}ult_visita" onclick="event.stopPropagation()"></div>
             <div class="sub-group"><label>Próxima visita</label><input type="date" data-key="${p}prox_visita" onclick="event.stopPropagation()"></div>
           </div>
+          <div class="sub-group"><label>Data desta visita</label><input type="date" data-key="${p}data_visita" id="${p}data_visita" onclick="event.stopPropagation()"></div>
           <div class="sub-group"><label>Filial / Unidade</label><input type="text" placeholder="Filial / Unidade (se houver)" data-key="${p}filial" onclick="event.stopPropagation()"></div>
         </div>
       </div>
@@ -1422,6 +1432,9 @@ function createPanel(idx) {
   panel.id = 'panel-' + idx;
   panel.innerHTML = buildPanelHTML(idx);
   document.getElementById('machineContent').appendChild(panel);
+  // v8.4.4: preencher data_visita com hoje automaticamente
+  const dvEl = document.querySelector(`[data-key="m${idx}_data_visita"]`);
+  if(dvEl && !dvEl.value) dvEl.value = new Date().toISOString().slice(0,10);
 }
 
 function addMachine() {
@@ -3016,7 +3029,7 @@ async function gerarPDF() {
     y = infoRow2(y, [{label:'Nº de Série', value:g('ns')}, {label:'Ano', value:g('ano')}]);
     y = infoRow2(y, [{label:'Tipo de Equipamento', value:g('tipo')}, {label:'Potência', value:g('potencia')}]);
     y = infoRow(y, 'Localização', g('localizacao'), false);
-    y = infoRow2(y, [{label:'TAG', value:g('tag')}, {label:'Data da Visita', value:g('ult_visita')}]);
+    y = infoRow2(y, [{label:'TAG', value:g('tag')}, {label:'Data da Visita', value:g('data_visita')||g('ult_visita')}]);
     const obsOp = g('obs_op');
     if (obsOp !== '—') y = infoRow(y, 'Obs. Operacional', obsOp, true);
     y += 3;
@@ -3418,6 +3431,10 @@ function pgpBuildVisitRequest(payload){
     phone: payload.phone || '',
     email: payload.email || '',
     city:  payload.city  || '',
+    // v8.4.4:
+    contact:   payload.contact   || '',
+    nextVisit: payload.nextVisit || '',
+    lastVisit: payload.lastVisit || '',
   };
 }
 
@@ -3680,6 +3697,172 @@ async function pgpDoSearch(){
   }
 }
 
+// ── v8.4.4 — HELPERS DE DADOS DE CLIENTE E DESTAQUES DINÂMICOS ───────────
+
+/**
+ * pgpLoadClientDataByName: busca dados do cliente em window._pgpClientsFull (cache do GAS)
+ * e preenche campos do formulário do midx atual sem sobrescrever o que o técnico digitou.
+ */
+function pgpLoadClientDataByName(name, midx){
+  const idx = pgpGetMachineIndex(midx !== undefined ? midx : currentMachine);
+  if(!window._pgpClientsFull || !window._pgpClientsFull.length) return;
+  const norm = v=>String(v||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+  const match = window._pgpClientsFull.find(c=>norm(c.nome||c.name||'')===norm(name));
+  if(!match) return;
+  pgpLoadClientDataFromObj(match, idx);
+}
+
+/**
+ * pgpLoadClientDataFromObj: preenche campos do formulário com dados do objeto cliente.
+ * Só preenche campos VAZIOS para não sobrescrever o que o técnico digitou.
+ */
+function pgpLoadClientDataFromObj(clientObj, midx){
+  const idx = pgpGetMachineIndex(midx !== undefined ? midx : currentMachine);
+  const p = `m${idx}_`;
+  const sv = (key, val) => {
+    if(!val) return;
+    const el = document.querySelector(`[data-key="${p}${key}"]`);
+    if(el && !el.value.trim()) el.value = val;
+  };
+  sv('cnpj',      clientObj.cnpj      || clientObj.CNPJ      || '');
+  sv('contato',   clientObj.contato   || clientObj.contact    || '');
+  sv('telefone',  clientObj.telefone  || clientObj.phone      || '');
+  sv('email',     clientObj.email     || '');
+  sv('cidade',    clientObj.cidade    || clientObj.city       || '');
+  sv('filial',    clientObj.filial    || clientObj.branch     || '');
+  sv('ult_visita',clientObj.lastVisit || clientObj.ultVisita  || '');
+  sv('prox_visita',clientObj.nextVisit|| clientObj.proxVisita || '');
+  // v8.4.4: destacar faltantes após preenchimento
+  setTimeout(()=>pgpHighlightMissingClientFields(idx), 60);
+}
+
+/**
+ * pgpHighlightMissingClientFields: adiciona borda vermelha em campos cadastrais vazios
+ * e exibe alerta de campos faltantes. Remove destaque ao digitar.
+ */
+function pgpHighlightMissingClientFields(midx){
+  const idx = pgpGetMachineIndex(midx !== undefined ? midx : currentMachine);
+  const p = `m${idx}_`;
+  const CAMPOS = [
+    {key:'cnpj',     label:'CNPJ'},
+    {key:'contato',  label:'Contato'},
+    {key:'telefone', label:'Telefone'},
+    {key:'email',    label:'E-mail'},
+    {key:'cidade',   label:'Cidade/Estado'},
+    {key:'prox_visita', label:'Próxima visita'},
+  ];
+
+  const faltantes = [];
+  CAMPOS.forEach(({key, label}) => {
+    const el = document.querySelector(`[data-key="${p}${key}"]`);
+    if(!el) return;
+    el.classList.remove('pgp-missing-field');
+    if(!el.value.trim()){
+      el.classList.add('pgp-missing-field');
+      faltantes.push(label);
+      // remover ao digitar
+      el.addEventListener('input', function handler(){
+        el.classList.remove('pgp-missing-field');
+        el.removeEventListener('input', handler);
+        pgpHighlightMissingClientFields(idx);
+      });
+    }
+  });
+
+  // Exibir/atualizar alerta de faltantes
+  const alertId = `pgp_missing_alert_${idx}`;
+  let alertEl = document.getElementById(alertId);
+  const panel = document.getElementById('panel-'+idx);
+  if(!panel) return;
+
+  if(faltantes.length > 0){
+    if(!alertEl){
+      alertEl = document.createElement('div');
+      alertEl.id = alertId;
+      alertEl.className = 'pgp-missing-alert';
+      // Inserir no topo do painel, antes do primeiro section
+      const firstSec = panel.querySelector('.section');
+      if(firstSec) panel.insertBefore(alertEl, firstSec);
+      else panel.appendChild(alertEl);
+    }
+    alertEl.innerHTML = `<strong>⚠ Dados cadastrais faltantes</strong>${faltantes.join(', ')}`;
+    alertEl.style.display = '';
+  } else if(alertEl){
+    alertEl.style.display = 'none';
+  }
+}
+
+/**
+ * pgpMarkDynamicFieldsForUpdate: destaca (laranja) campos que mudam a cada visita
+ * para lembrar o técnico de atualizá-los. Remove destaque ao editar.
+ */
+function pgpMarkDynamicFieldsForUpdate(midx){
+  const idx = pgpGetMachineIndex(midx !== undefined ? midx : currentMachine);
+  const p = `m${idx}_`;
+  const mark = (key) => {
+    const el = document.querySelector(`[data-key="${p}${key}"]`) || document.getElementById(`${p}${key}`);
+    if(!el) return;
+    el.classList.add('pgp-field-needs-update');
+    el.addEventListener('input', function handler(){
+      el.classList.remove('pgp-field-needs-update');
+      el.classList.add('pgp-field-confirmed-current');
+      el.removeEventListener('input', handler);
+    }, {once:true});
+    el.addEventListener('change', function handler(){
+      el.classList.remove('pgp-field-needs-update');
+      el.classList.add('pgp-field-confirmed-current');
+      el.removeEventListener('change', handler);
+    }, {once:true});
+  };
+
+  // Campos variáveis de cabeçalho
+  mark('horimetro');
+  mark('data_leitura');
+  mark('data_visita');
+  mark('prox_visita');
+
+  // Campos de peças: valor_mostrado e ult (última troca) por cenário
+  PARTS.forEach(pt=>{
+    const pk = `${p}${pt.k}`;
+    const naBtn = document.getElementById(`${pk}_na`);
+    const isNA = naBtn && naBtn.classList.contains('active');
+    if(isNA) return; // peças N/A não destacar
+    const vmEl = document.getElementById(`${pk}_valor_mostrado`);
+    if(vmEl){
+      vmEl.classList.add('pgp-field-needs-update');
+      vmEl.addEventListener('input', ()=>{
+        vmEl.classList.remove('pgp-field-needs-update');
+        vmEl.classList.add('pgp-field-confirmed-current');
+      },{once:true});
+    }
+    // destacar última troca apenas se vier do banco (não vazia)
+    const ultEl = document.getElementById(`${pk}_ult`);
+    if(ultEl && ultEl.value){
+      ultEl.classList.add('pgp-field-needs-update');
+      ultEl.addEventListener('input',()=>{
+        ultEl.classList.remove('pgp-field-needs-update');
+        ultEl.classList.add('pgp-field-confirmed-current');
+      },{once:true});
+    }
+  });
+}
+
+/**
+ * pgpConfirmDynamicFieldUpdated: remove destaque de atualização de um campo.
+ * Pode ser chamado externamente para confirmar manualmente.
+ */
+function pgpConfirmDynamicFieldUpdated(inputOrKey, midx){
+  const idx = pgpGetMachineIndex(midx !== undefined ? midx : currentMachine);
+  let el = (typeof inputOrKey === 'string')
+    ? (document.querySelector(`[data-key="m${idx}_${inputOrKey}"]`) || document.getElementById(`m${idx}_${inputOrKey}`))
+    : inputOrKey;
+  if(!el) return;
+  el.classList.remove('pgp-field-needs-update');
+  el.classList.add('pgp-field-confirmed-current');
+}
+
+// ── FIM helpers v8.4.4 ────────────────────────────────────────────────────
+
 function pgpLoadMachine(eq,localDb,midx=currentMachine){
   const idx = pgpGetMachineIndex(midx);
   const p = `m${idx}_`;
@@ -3691,6 +3874,12 @@ function pgpLoadMachine(eq,localDb,midx=currentMachine){
   sv('cidade',eq.city);         sv('marca',eq.brand);       sv('modelo',eq.model);
   sv('ns',eq.serial);           sv('ano',eq.year);          sv('localizacao',eq.location);
   sv('tag',eq.tag);             sv('horimetro',eq.hourTotal||'');
+  // Última visita vem do banco; data_visita = hoje por padrão; prox_visita preservada se vier
+  if(eq.lastVisit) sv('ult_visita', eq.lastVisit);
+  if(eq.nextVisit) sv('prox_visita', eq.nextVisit);
+  // data_visita: preencher com hoje automaticamente (editável pelo técnico)
+  const dvEl = document.querySelector(`[data-key="${p}data_visita"]`);
+  if(dvEl && !dvEl.value) dvEl.value = new Date().toISOString().slice(0,10);
 
   document.querySelectorAll(`#panel-${idx} .field-item`).forEach(fi=>{
     if([...fi.querySelectorAll('input,select,textarea')].some(i=>i.value?.trim()))
@@ -3721,6 +3910,11 @@ function pgpLoadMachine(eq,localDb,midx=currentMachine){
   card.classList.add('show');
   document.querySelectorAll('[data-section]').forEach(s=>refreshSection(s));
   updateProgress(); updateAllTabNames();
+  // v8.4.4 — destacar campos faltantes e campos variáveis após carga
+  setTimeout(()=>{
+    pgpHighlightMissingClientFields(idx);
+    pgpMarkDynamicFieldsForUpdate(idx);
+  }, 100);
 
   renderMachineHistory(null, true);
   fetchMachineHistory(eq.id || eq.machine_id || '').then(hist => renderMachineHistory(hist, false));
@@ -3841,7 +4035,11 @@ async function pgpClientSearch(){
     try{
       const r=await fetch(_pgpGsUrl+'?action=getClientsForField&key='+_AUTH_HASH);
       const d=await r.json();
-      if(d.status==='ok') serverClients=(d.clients||[]).filter(c=>norm(c).includes(norm(q)));
+      if(d.status==='ok'){
+        serverClients=(d.clients||[]).filter(c=>norm(c).includes(norm(q)));
+        // v8.4.4: armazenar clientsFull para uso ao selecionar
+        if(d.clientsFull) window._pgpClientsFull=d.clientsFull;
+      }
     }catch(e){}
   }
 
@@ -3887,6 +4085,10 @@ async function pgpSelectClient(name){
 
   pgpSaveLastClient(name);
   pgpRenderLastClients();
+
+  // v8.4.4: pré-preencher dados do cliente se disponíveis em clientsFull
+  pgpLoadClientDataByName(name);
+
   await pgpFetchMachinesByClient(name);
 }
 
@@ -3908,7 +4110,11 @@ async function pgpFetchMachinesByClient(client){
         '&key='+_AUTH_HASH
       );
       const d=await r.json();
-      if(d.status==='ok') serverMachines=d.machines||[];
+      if(d.status==='ok'){
+        serverMachines=d.machines||[];
+        // v8.4.4: se o GAS devolveu dados do cliente junto, usar
+        if(d.clientData) pgpLoadClientDataFromObj(d.clientData, currentMachine);
+      }
     }catch(e){}
   }
 
@@ -4085,13 +4291,16 @@ function pgpBuildPreventivaPayload(midx=currentMachine){
     branch:base.branch,
     brand:base.brand,
     model:base.model,
-    visitDate:new Date().toISOString(),
+    visitDate:base.visitDate,
     hourTotal:base.hourTotal,
     hpw:base.hpw,
     tech:base.tech,
     tipo:'preventiva',
     scenario:base.scenario,
     generalObs:base.generalObs,
+    cnpj:base.cnpj||'',phone:base.phone||'',email:base.email||'',city:base.city||'',
+    // v8.4.4:
+    contact:base.contact||'',nextVisit:base.nextVisit||'',lastVisit:base.lastVisit||'',
     parts
   };
 }
@@ -4268,12 +4477,27 @@ function pgpBuildPayload(midx=currentMachine){
     const refEl  =document.getElementById(`${pk}_ref`);
     const obsEl  =document.getElementById(`${pk}_obs`);
     const contEl =document.getElementById(`${pk}_contador`);
+    const vmEl   =document.getElementById(`${pk}_valor_mostrado`);
     let lastChange=0;
     if(ultEl?.value) lastChange=parseInt(ultEl.value)||0;
     else if(valorEl?.value&&contEl?.value==='regressivo') lastChange=hourTotal-(parseFloat(valorEl.value)||0);
     else if(valorEl?.value&&contEl?.value==='progressivo') lastChange=hourTotal-(parseFloat(valorEl.value)||0);
     const interval=parseInt(intEl?.value)||pt.intDefault;
-    parts[aid]={name:PART_NAME_MAP[pt.k]||pt.k,lastChange:Math.max(0,lastChange),interval,ref:refEl?.value.trim()||'',obs:obsEl?.value.trim()||'',na:isNA};
+    // v8.4.4: calcular horasRodadas/horasRestantes/status para o payload
+    const vmN = parseFloat(vmEl?.value||'');
+    const contVal = contEl?.value||'';
+    let horasRodadas='', horasRestantes='', partStatus='';
+    if(!isNaN(vmN) && interval && (contVal==='progressivo'||contVal==='regressivo')){
+      horasRodadas   = contVal==='progressivo' ? Math.max(0,vmN).toFixed(0) : Math.max(0,interval-vmN).toFixed(0);
+      horasRestantes = contVal==='progressivo' ? Math.max(0,interval-vmN).toFixed(0) : Math.max(0,vmN).toFixed(0);
+      const pct = parseFloat(horasRodadas)/interval*100;
+      partStatus = parseFloat(horasRestantes)<=0?'VENCIDO':pct>=80?'ATENÇÃO':'OK';
+    }
+    parts[aid]={name:PART_NAME_MAP[pt.k]||pt.k,lastChange:Math.max(0,lastChange),interval,
+      ref:refEl?.value.trim()||'',obs:obsEl?.value.trim()||'',na:isNA,
+      // v8.4.4:
+      contador:contVal, valorMostrado:vmEl?.value.trim()||'',
+      horasRodadas, horasRestantes, status:partStatus};
   });
   return{
     machine_id:(()=>{
@@ -4296,13 +4520,21 @@ function pgpBuildPayload(midx=currentMachine){
     branch: gv('filial'),
     brand:gv('marca'),model:gv('modelo'),serial:gv('ns'),tag:gv('tag'),
     location:gv('localizacao'),tech:gv('tecnico'),hourTotal,hpw,
-    visitDate:new Date().toISOString(),
+    // v8.4.4: usar data_visita como visitDate; fallback para data atual
+    visitDate: (()=>{
+      const dv = gv('data_visita');
+      return dv ? dv : new Date().toISOString().slice(0,10);
+    })(),
     scenario:(document.getElementById(`${p}scenario`)?.value||''),
     parts,generalObs:gv('obs_gerais'),
-    cnpj:   gv('cnpj')   || '',
-    phone:  gv('telefone') || '',
-    email:  gv('email')  || '',
-    city:   gv('cidade') || '',
+    cnpj:    gv('cnpj')      || '',
+    phone:   gv('telefone')  || '',
+    email:   gv('email')     || '',
+    city:    gv('cidade')    || '',
+    // v8.4.4: campos novos
+    contact: gv('contato')   || '',
+    nextVisit: gv('prox_visita') || '',
+    lastVisit: gv('ult_visita')  || '',
   };
 }
 
@@ -4386,11 +4618,15 @@ async function pgpEnviarGS(){
         if (clientNome) {
           await pgpPostJson('saveClient', {
             client: {
-              nome:     clientNome,
-              cnpj:     payload.cnpj  || '',
-              telefone: payload.phone || '',
-              email:    payload.email || '',
-              cidade:   payload.city  || '',
+              nome:      clientNome,
+              cnpj:      payload.cnpj    || '',
+              telefone:  payload.phone   || '',
+              email:     payload.email   || '',
+              cidade:    payload.city    || '',
+              // v8.4.4:
+              contato:   payload.contact  || '',
+              filial:    payload.branch   || '',
+              nextVisit: payload.nextVisit|| '',
             }
           });
         }
