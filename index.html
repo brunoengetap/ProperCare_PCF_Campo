@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ProperCare Field · PGP Preventivas v8.4.4</title>
+<title>ProperCare Field · PGP Preventivas v8.4.5</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -451,7 +451,7 @@
 <div class="login-overlay" id="loginOverlay">
   <div class="login-box">
     <div class="login-logo">⚙ Proper</div>
-    <div class="login-sub">ProperCare Field · v8.4.3</div>
+    <div class="login-sub">ProperCare Field · v8.4.5</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -464,7 +464,7 @@
   <div class="top-row">
     <div>
       <h1>📋 ProperCare Field</h1>
-      <div class="subtitle">PGP Preventiva · v8.4.2</div>
+      <div class="subtitle">PGP Preventiva · v8.4.5</div>
     </div>
     <div class="header-right">
       <div class="progress-pill" id="progressPill">0 / 0</div>
@@ -827,7 +827,7 @@ const PHOTOS = [
 
 let machines = [];
 let currentMachine = 0;
-const APP_VERSION = 'v8.4.3';
+const APP_VERSION = 'v8.4.5';
 
 function normSessionKey(v) {
   return String(v || '')
@@ -3876,12 +3876,55 @@ function pgpLoadMachine(eq,localDb,midx=currentMachine){
   sv('cidade',eq.city);         sv('marca',eq.brand);       sv('modelo',eq.model);
   sv('ns',eq.serial);           sv('ano',eq.year);          sv('localizacao',eq.location);
   sv('tag',eq.tag);             sv('horimetro',eq.hourTotal||'');
+  if(eq.tipo)     sv('tipo',    eq.tipo);
+  if(eq.potencia) sv('potencia',eq.potencia);
   // Última visita vem do banco; data_visita = hoje por padrão; prox_visita preservada se vier
   if(eq.lastVisit) sv('ult_visita', eq.lastVisit);
   if(eq.nextVisit) sv('prox_visita', eq.nextVisit);
   // data_visita: preencher com hoje automaticamente (editável pelo técnico)
   const dvEl = document.querySelector(`[data-key="${p}data_visita"]`);
   if(dvEl && !dvEl.value) dvEl.value = new Date().toISOString().slice(0,10);
+
+  // Restaurar regime de trabalho (turnos)
+  if(eq.regimeData && eq.regimeData.length){
+    const container = document.getElementById(p+'turnos');
+    if(container){
+      // Limpar turnos existentes (manter só o primeiro)
+      const existingRows = container.querySelectorAll('.turno-row');
+      existingRows.forEach((r,i)=>{ if(i>0) r.remove(); });
+      eq.regimeData.forEach((t, tIdx)=>{
+        let row;
+        if(tIdx === 0){
+          row = container.querySelector('.turno-row');
+        } else {
+          const div = document.createElement('div');
+          div.innerHTML = buildTurnoRow(p, tIdx, idx);
+          container.appendChild(div.firstElementChild);
+          row = container.lastElementChild;
+        }
+        if(!row) return;
+        const diasEl   = row.querySelector('.turno-dias-sel');
+        const inicioEl = row.querySelector(`input[type="time"][data-key$="_inicio"]`);
+        const fimEl    = row.querySelector(`input[type="time"][data-key$="_fim"]`);
+        if(diasEl)   diasEl.value   = t.dias;
+        if(inicioEl) inicioEl.value = t.inicio;
+        if(fimEl)    fimEl.value    = t.fim;
+        // Tratar custom days
+        const customWrap = row.querySelector('.custom-days-wrap');
+        if(diasEl?.value==='custom' && customWrap){
+          customWrap.style.display='';
+          if(t.customDays?.length){
+            const cbs = customWrap.querySelectorAll('input[type="checkbox"]');
+            t.customDays.forEach(i=>{ if(cbs[i]) cbs[i].checked=true; });
+          }
+        }
+      });
+      // Mostrar/ocultar botão remover
+      const delBtns = container.querySelectorAll('.turno-del');
+      delBtns.forEach(b=>b.style.display = delBtns.length>1?'':'none');
+      calcRegime(idx);
+    }
+  }
 
   document.querySelectorAll(`#panel-${idx} .field-item`).forEach(fi=>{
     if([...fi.querySelectorAll('input,select,textarea')].some(i=>i.value?.trim()))
@@ -4523,6 +4566,21 @@ function pgpBuildPayload(midx=currentMachine){
     branch: gv('filial'),
     brand:gv('marca'),model:gv('modelo'),serial:gv('ns'),tag:gv('tag'),
     location:gv('localizacao'),tech:gv('tecnico'),hourTotal,hpw,
+    tipo: gv('tipo') || '',
+    potencia: gv('potencia') || '',
+    year: gv('ano') || '',
+    regimeData: (()=>{
+      const container = document.getElementById(`${p}turnos`);
+      if(!container) return [];
+      return [...container.querySelectorAll('.turno-row')].map(row=>{
+        const diasEl = row.querySelector('.turno-dias-sel');
+        const inicioEl = row.querySelector('input[type="time"][data-key$="_inicio"]');
+        const fimEl    = row.querySelector('input[type="time"][data-key$="_fim"]');
+        const allCbs = [...(row.querySelectorAll('.custom-days-wrap input[type="checkbox"]')||[])];
+        const customChecked = allCbs.map((cb,i)=>cb.checked?i:-1).filter(i=>i>=0);
+        return { dias: diasEl?.value||'', inicio: inicioEl?.value||'', fim: fimEl?.value||'', customDays: customChecked };
+      }).filter(t=>t.dias&&t.inicio&&t.fim);
+    })(),
     // v8.4.4: usar data_visita como visitDate; fallback para data atual
     visitDate: (()=>{
       const dv = gv('data_visita');
@@ -4686,9 +4744,14 @@ function pgpUpdateAdminLocal(payload){
     if(payload.hpw || payload.hpw===0) eq.hpw=parseInt(payload.hpw)||0;
     eq.lastVisit=new Date().toISOString().slice(0,10);
     if(payload.cnpj)  eq.cnpj  = payload.cnpj;
+    if(payload.contact) eq.contact = payload.contact;
     if(payload.phone) eq.phone = payload.phone;
     if(payload.email) eq.email = payload.email;
     if(payload.city)  eq.city  = payload.city;
+    if(payload.tipo)     eq.tipo     = payload.tipo;
+    if(payload.potencia) eq.potencia = payload.potencia;
+    if(payload.year)     eq.year     = payload.year;
+    if(payload.regimeData && payload.regimeData.length) eq.regimeData = payload.regimeData;
     if(payload.generalObs) eq.obs = payload.generalObs;
     if(payload.parts){
       if(!eq.parts) eq.parts={};
