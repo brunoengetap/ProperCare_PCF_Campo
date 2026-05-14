@@ -966,8 +966,10 @@ function buildPartsTable(p, midx, scenario) {
     }
 
     // Campos ocultos obrigatórios para compatibilidade de IDs
+    // Cenário D: contador progressivo fixo (hidden); Cenário C: select visível; outros: hidden com valor
     const hiddenFields = `
-      ${scenario !== 'C' && scenario !== 'D' ? `<input type="hidden" id="${pk}_contador" data-key="${pk}_contador" value="${scenario==='E'?'regressivo':scenario==='B'?'nao_informado':'nao_informado'}">` : ''}
+      ${scenario === 'D' ? `<input type="hidden" id="${pk}_contador" data-key="${pk}_contador" value="progressivo">` :
+        scenario !== 'C' ? `<input type="hidden" id="${pk}_contador" data-key="${pk}_contador" value="${scenario==='E'?'regressivo':scenario==='B'?'nao_informado':'nao_informado'}">` : ''}
     `;
 
     return `
@@ -4261,7 +4263,8 @@ function pgpBuildPreventivaPayload(midx=currentMachine){
 
     const acaoFinal=isNA?'na':acao;
     const refAnterior=(loadedMachine?.parts?.[aid]?.ref)||'';
-    const lastChange=parseInt(ultEl?.value)||0;
+    // Usar _ult se preenchido, senão usar o lastChange calculado por pgpBuildPayload (via valor_mostrado)
+    const lastChange=parseInt(ultEl?.value)||base.parts[aid]?.lastChange||0;
 
     parts[aid]={
       name:(base.parts[aid]?.name)||pt.k,
