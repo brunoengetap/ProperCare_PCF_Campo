@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>ProperCare Field · PGP Preventivas v8.5.1</title>
+<title>ProperCare Field · PGP Preventivas v8.5.2</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -464,7 +464,7 @@
   <div class="top-row">
     <div>
       <h1>📋 ProperCare Field</h1>
-      <div class="subtitle">PGP Preventiva · v8.5.1</div>
+      <div class="subtitle">PGP Preventiva · v8.5.2</div>
     </div>
     <div class="header-right">
       <div class="progress-pill" id="progressPill">0 / 0</div>
@@ -1106,6 +1106,53 @@ function buildHiddenPartIds(p) {
   }).join('');
 }
 
+// v8.5.2 — Restaura valores das peças (valor_mostrado, ult, int, ref, contador, na)
+// a partir da máquina carregada do banco/local. Chamado após buildPartsTable porque
+// os IDs da tabela só existem depois que o cenário é selecionado. Idempotente:
+// pode ser invocado a cada troca de cenário sem efeitos colaterais.
+function pgpRestoreLoadedParts(p, midx) {
+  const loadedEq = pgpGetLoadedMachineForIndex(midx);
+  if (!loadedEq || !loadedEq.parts) return;
+  PARTS.forEach(pt => {
+    const aid = PART_ID_MAP[pt.k];
+    if (!aid) return;
+    const sp = loadedEq.parts[aid];
+    if (!sp) return;
+    const pk = `${p}${pt.k}`;
+    // Última troca (campo no detalhe expandido) — preserva 0 como valor válido
+    const ultEl = document.getElementById(`${pk}_ult`);
+    if (ultEl && sp.lastChange !== undefined && sp.lastChange !== null && sp.lastChange !== '') {
+      ultEl.value = sp.lastChange;
+    }
+    // Intervalo
+    const intEl = document.getElementById(`${pk}_int`);
+    if (intEl && sp.interval) intEl.value = sp.interval;
+    // Referência
+    const refEl = document.getElementById(`${pk}_ref`);
+    if (refEl && sp.ref) refEl.value = sp.ref;
+    // Valor mostrado (visível em cenários B/C/D/E)
+    if (sp.valorMostrado !== undefined && sp.valorMostrado !== null && sp.valorMostrado !== '') {
+      const vmEl = document.getElementById(`${pk}_valor_mostrado`);
+      if (vmEl) vmEl.value = sp.valorMostrado;
+    }
+    // Contador — só atualiza select visível (cenário C); nos demais o hidden já tem valor por defeito
+    if (sp.contador) {
+      const cEl = document.getElementById(`${pk}_contador`);
+      if (cEl && cEl.tagName === 'SELECT') cEl.value = sp.contador;
+    }
+    // N/A
+    if (sp.na) {
+      const nb = document.getElementById(`${pk}_na`);
+      if (nb && !nb.classList.contains('active')) {
+        nb.classList.add('active');
+        nb.textContent = '✕ N/A';
+        const tr = document.getElementById(`${pk}_tr`);
+        if (tr) tr.classList.add('pt-na');
+      }
+    }
+  });
+}
+
 function selectScenario(p, scId, midx, e) {
   e.stopPropagation();
   // Botões
@@ -1139,6 +1186,11 @@ function selectScenario(p, scId, midx, e) {
       else contEl.value = 'nao_informado';
     }
   });
+
+  // v8.5.2 — Restaurar valores das peças da máquina carregada (banco/local).
+  // Necessário porque pgpLoadMachine roda antes do cenário ser escolhido, e nesse
+  // momento os IDs da tabela ainda não existem. Aqui a tabela já foi construída.
+  pgpRestoreLoadedParts(p, midx);
 
   // Marca o field-item como "expanded+checked" para contar no progresso
   const section = wrap.closest('[data-section]');
